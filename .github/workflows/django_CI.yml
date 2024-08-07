@@ -26,7 +26,7 @@ jobs:
 
     - name: Create secrets.json
       run: |
-        echo '{"SECRET_KEY": "${{ secrets.SECRET_KEY }}"}' > ./secrets.json
+        echo '{"SECRET_KEY": "${{ secrets.SECRET_KEY }}"}' > aiServer/aiServer/secrets.json
 
     - name: Run Tests
       run: |

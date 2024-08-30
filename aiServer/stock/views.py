@@ -12,7 +12,8 @@ def recommended_stock_list(request):
 @api_view(['POST'])
 def stock_evaluate(request) -> JsonResponse:
     stocks = request.data['stocks']
+    amount = request.data['amount']  # 사용 가능 금액
 
     response = get_stock_order_ratio(stocks)
 
-    return JsonResponse({"outputs": response}, safe=True)
+    return JsonResponse({"stocks": response}, safe=True)

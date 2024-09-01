@@ -40,17 +40,16 @@ jobs:
       run: |
         echo "${{ secrets.EC2_KEY }}" > key.pem
         chmod 400 key.pem
-
         # secrets.json 파일 생성
-        ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << 'EOF'
-          echo '{"SECRET_KEY": "'"${SECRETS}"'"}' > /home/ubuntu/aiServer/secrets.json
+        ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
+          echo '{"SECRET_KEY": "'"${SECRET}"'"}' > /home/ubuntu/aiServer/secrets.json
         EOF
         
         # 코드 업로드
         scp -o StrictHostKeyChecking=no -i key.pem -r ./aiServer $EC2_USER@$EC2_HOST:/home/ubuntu/
         
         # 서버에 접속하여 작업 수행
-        ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << 'EOF'
+        ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
           cd /home/ubuntu/aiServer || exit 1
           python3 -m venv venv
           source venv/bin/activate

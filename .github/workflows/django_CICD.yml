@@ -35,7 +35,7 @@ jobs:
       uses: jsdaniell/create-json@1.1.2
       with:
         name: "secrets.json"
-        json: ${{ secrets.SECRET_JSON }}
+        json: ${{ secrets.SECRETS }}
 
     - name: Upload Code to EC2
       env:

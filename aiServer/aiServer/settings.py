@@ -31,7 +31,7 @@ SECRET_KEY = get_secret("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['https://www.api.ant.helper.com', 'https://api.ant.helper.com']
+ALLOWED_HOSTS = ['https://www.api.ant.helper.com', 'https://api.ant.helper.com', '127.0.0.1', 'localhost']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -130,6 +130,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # cors
 CORS_ORIGIN_WHITELIST = ['https://api.ant-helper.com',
                          'https://www.api.ant-helper.com',
+                         'http://127.0.0.1:8080'
                          ]
 CORS_ALLOW_CREDENTIALS = True
 

@@ -1,22 +1,16 @@
+import datetime
 from typing import Any
 
-import numpy as np
-from sklearn.linear_model import LinearRegression
-from sklearn.model_selection import train_test_split
-import joblib
-from sklearn.feature_extraction.text import TfidfVectorizer
-from konlpy.tag import Okt
-from FinanceDataReader.data import StockListing
 import FinanceDataReader as fdr
-from pykrx import stock
-import pandas_datareader.data as pdr
-import yfinance as yf
+import joblib
+import numpy as np
 import pandas as pd
-import datetime
-import pandas_datareader.data as pdr
-import matplotlib.pyplot as plt
 import requests
 from bs4 import BeautifulSoup
+from konlpy.tag import Okt
+from sklearn.linear_model import LinearRegression
+from sklearn.model_selection import train_test_split
+
 
 class Output:
     def __init__(self, product_number, name, quantity):
@@ -31,11 +25,14 @@ class Output:
             "quantity": self.quantity,
         }
 
+
 # 요청된 주식 목록에 따라 각 주식의 구매 비율을 리턴하는 메서드
 def get_stock_order_ratio(stocks) -> list[dict[str, Any]]:
     open_dif_data_list = start_predict(stocks)
-    newslabel_match_openchange = add_news_label(open_dif_data_list) 
-    outputs = predict_result(newslabel_match_openchange)
+    newslabel_match_openchange = predict_add_news_label(open_dif_data_list)
+    print(newslabel_match_openchange)
+
+    outputs = predict_result(newslabel_match_openchange, open_dif_data_list)
 
     # outputs = []
     # output = Output("005930", "삼성전자", 1)
@@ -46,21 +43,22 @@ def get_stock_order_ratio(stocks) -> list[dict[str, Any]]:
 
 okt = Okt()
 
+
 def okt_tokenizer(text):
     tokens = okt.morphs(text)
     return tokens
 
+
 title_list = []
 date_list = []
 
-#최신~ 30페이지까지 로드
+# 최신~ 30페이지까지 로드
 for i in range(1, 100):
 
     if i == 1:
         url = 'https://www.sedaily.com/NewsList/GD05'
     else:
         url = f'https://www.sedaily.com/NewsList/GD05/New/{i}'
-
 
     # 웹 페이지 요청
     response = requests.get(url)
@@ -73,8 +71,6 @@ for i in range(1, 100):
     rel_times = soup.select('.rel_time')
     dates = soup.select('.date')
 
-
-
     for title in titles:
         title_list.append(title.get_text())
     for rel_time in rel_times:
@@ -84,7 +80,7 @@ for i in range(1, 100):
         date_list.append(date.get_text())
 
 # 다음날 주가 예측 위한 최신 뉴스 기사들 모음
-news_list = pd.DataFrame({'title':title_list,'date':date_list})
+news_list = pd.DataFrame({'title': title_list, 'date': date_list})
 
 
 # 감정 점수 가중 평균 계산 함수
@@ -114,14 +110,13 @@ def weighted_sentiment_average(sentiments, weights):
 # 과거 기사들 모음. 과거 변화량과의 비교로 각 주식들 모델들의 변화량에 따른 주식 예측 모델 생성 위함
 makemodel_title_list = []
 makemodel_date_list = []
-#최신~ 200페이지까지 로드
+# 최신~ 200페이지까지 로드
 for i in range(1, 200):
 
     if i == 1:
         url = 'https://www.sedaily.com/NewsList/GD05'
     else:
         url = f'https://www.sedaily.com/NewsList/GD05/New/{i}'
-
 
     # 웹 페이지 요청
     response = requests.get(url)
@@ -142,19 +137,29 @@ for i in range(1, 200):
     for date in dates:
         makemodel_date_list.append(date.get_text())
 
-   
+
 # 1번. 각 종목별 변화량 차이 만들기
 def start_predict(stocks):
+    start = (2000, 1, 1)  # 2020년 01년 01월
+    start = datetime.datetime(*start)
+    end = datetime.date.today()  # 현재
+
+    print(stocks)
+
     open_dif_data_list = {}
-    for index, row in stocks.iterrows():
-        code = row['ProductNumber']
-        company_name = row['name']
-        open_dif_data_list[company_name] = make_diff(fdr.DataReader(code, start=start, end= end))
+    for stock in stocks:
+        print(stock)
+        print(stock['productNumber'])
+        print(stock['name'])
+        code = stock['productNumber']
+        company_name = stock['name']
+        open_dif_data_list[company_name] = make_diff(fdr.DataReader(code, start=start, end=end))
 
     return open_dif_data_list
 
+
 # 2번. 뉴스 라벨 붙이기
-def add_news_label(open_dif_data_list):
+def predict_add_news_label(open_dif_data_list):
     newslabel_match_openchange = {}
     for i in range(len(open_dif_data_list)):
         company_name = list(open_dif_data_list.keys())[i]
@@ -162,8 +167,9 @@ def add_news_label(open_dif_data_list):
 
     return newslabel_match_openchange
 
+
 # 3번. 시가 예측하기
-def predict_result(newslabel_match_openchange):
+def predict_result(newslabel_match_openchange, open_dif_data_list):
     predicted_stock_openprice = {}
     for i in range(len(newslabel_match_openchange)):
         company_name = list(newslabel_match_openchange.keys())[i]
@@ -175,7 +181,7 @@ def predict_result(newslabel_match_openchange):
             predicted_stock_openprice[company_name] = predicted_tomorrow_openprice(data, company_name, model)
         except (IndexError, KeyError) as e:
             print(f"Warning: Skipping {company_name} due to error: {e}")
-    
+
     predict_stock_list = {}
     predict_open_list = []
     for s in predicted_stock_openprice:
@@ -194,7 +200,7 @@ def make_diff(df):
         if i == 0:
             open_dif.append(0)
         else:
-            open_dif.append(data['Open'].iloc[i]-data['Open'].iloc[i-1])
+            open_dif.append(data['Open'].iloc[i] - data['Open'].iloc[i - 1])
 
     data['Change'] = open_dif
 
@@ -210,10 +216,8 @@ def add_news_label(data, name):
             today_news_title.append(title_list[i])
             today_date_list.append(date_list[i])
 
-
-
-    today_news_title_date = pd.DataFrame({'title':today_news_title,'Date':today_date_list})
-    today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date']) # Convert 'Date' column to datetime
+    today_news_title_date = pd.DataFrame({'title': today_news_title, 'Date': today_date_list})
+    today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date'])  # Convert 'Date' column to datetime
 
     if len(today_news_title) == 0:
         today_news_title_date['title_label'] = 0
@@ -223,9 +227,8 @@ def add_news_label(data, name):
         newslabel_match_openchange = pd.merge(today_news_title_date, data, on='Date')
         return newslabel_match_openchange
 
-
-    SA_lr_best = joblib.load('/Users/seminyang/ant-helper-ai-server/aiServer/stock/SA_lr_best.pkl')
-    tfidf = joblib.load('/Users/seminyang/ant-helper-ai-server/aiServer/stock/tfidf.pkl')
+    SA_lr_best = joblib.load('./static/SA_lr_best.pkl')
+    tfidf = joblib.load('./static/tfidf.pkl')
     # # 1) 분석할 데이터의 피처 벡터화 ---<< title >> 분석
     today_data_title_tfidf = tfidf.transform(today_news_title_date['title'])
     # # 2) 최적 파라미터 학습모델에 적용하여 감성 분석
@@ -238,6 +241,7 @@ def add_news_label(data, name):
 
     return newslabel_match_openchange
 
+
 # 3번. 모델 만들기
 def make_model(data, name):
     today_news_title = []
@@ -247,15 +251,15 @@ def make_model(data, name):
             today_news_title.append(makemodel_title_list[i])
             today_date_list.append(makemodel_date_list[i])
 
-    today_news_title_date = pd.DataFrame({'title':today_news_title,'Date':today_date_list})
-    today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date']) # Convert 'Date' column to datetime
+    today_news_title_date = pd.DataFrame({'title': today_news_title, 'Date': today_date_list})
+    today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date'])  # Convert 'Date' column to datetime
 
     if len(today_news_title) == 0:
-        tomorrow_stock = joblib.load('/content/tomorrow_stock.pkl')
+        tomorrow_stock = joblib.load('./static/tomorrow_stock.pkl')
         return tomorrow_stock
 
-    SA_lr_best = joblib.load('/content/SA_lr_best.pkl')
-    tfidf = joblib.load('/content/tfidf.pkl')
+    SA_lr_best = joblib.load('./static/SA_lr_best.pkl')
+    tfidf = joblib.load('./static/tfidf.pkl')
     # # 1) 분석할 데이터의 피처 벡터화 ---<< title >> 분석
     today_data_title_tfidf = tfidf.transform(today_news_title_date['title'])
     # # 2) 최적 파라미터 학습모델에 적용하여 감성 분석
@@ -265,14 +269,13 @@ def make_model(data, name):
 
     newslabel_match_openchange = pd.merge(today_news_title_date, data, on='Date')
 
-
-  ###########
+    ###########
     sentiments = newslabel_match_openchange['title_label']  # 예시 감정 점수 리스트
-    weights = np.random.rand(len(newslabel_match_openchange)) # 예시 가중치 리스트
+    weights = np.random.rand(len(newslabel_match_openchange))  # 예시 가중치 리스트
 
     # Ensure weights don't sum to zero
     if sum(weights) == 0:
-        weights[0] = weights[0]+ 0.5104 # Add a small constant to all weights
+        weights[0] = weights[0] + 0.5104  # Add a small constant to all weights
     # weights = weights / weights.sum()  # Normalize weights
     weighted_avg = weighted_sentiment_average(sentiments, weights)
 
@@ -288,11 +291,11 @@ def make_model(data, name):
 
     X = np.array(
         label_dif
-        )  # 예: [weighted_avg, stock_change]
+    )  # 예: [weighted_avg, stock_change]
     y = np.array(ylist)  # 예: next_day_stock_price
 
     if len(X) <= 1:
-        tomorrow_stock = joblib.load('/content/tomorrow_stock.pkl')
+        tomorrow_stock = joblib.load('./static/tomorrow_stock.pkl')
         return tomorrow_stock
     # 데이터셋을 학습용과 테스트용으로 나누기
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
@@ -303,11 +306,12 @@ def make_model(data, name):
 
     return model
 
+
 # 4번. 내일 시가 예측
 def predicted_tomorrow_openprice(data, name, model):
     model = model
 
-    if  np.isnan(data['title_label'].iloc[0]):
+    if np.isnan(data['title_label'].iloc[0]):
         return 0
 
     weight_seed = len(data['title_label'])
@@ -317,7 +321,7 @@ def predicted_tomorrow_openprice(data, name, model):
     # # 가중 평균 계산
     # Ensure weights don't sum to zero
     if sum(weights) == 0:
-        weights[0] = weights[0]+ 0.5104  # Add a small constant to all weights
+        weights[0] = weights[0] + 0.5104  # Add a small constant to all weights
         # weights = weights / weights.sum()  # Normalize weights
     weighted_avg = weighted_sentiment_average(sentiments, weights)
 

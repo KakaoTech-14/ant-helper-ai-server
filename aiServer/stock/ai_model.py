@@ -347,7 +347,19 @@ def predicted_tomorrow_openprice(data, name, model):
 
     return int(predicted_price[0])
 
-#7 오늘 시가 받아오기
+# 7번. 오늘 시가 가져오기
+def get_today_open_price(stock_code: str) -> float:
+    today = datetime.datetime.today().strftime('%Y-%m-%d')
+    df = fdr.DataReader(stock_code, today, today)
+    
+    if not df.empty:
+        return df['Open'].iloc[0]  # 오늘의 시가 반환
+    else:
+        print(f"오늘의 시가 데이터를 찾을 수 없습니다: {stock_code}")
+        return None
+
+
+#8 매수/매도 판단
 def calculate_stock_amounts(predicted_results: dict, amount: float) -> dict:
     stock_orders = []
     

@@ -7,9 +7,9 @@ import numpy as np
 import pandas as pd
 import requests
 from bs4 import BeautifulSoup
-from konlpy.tag import Okt
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+
 
 
 class Output:
@@ -37,16 +37,10 @@ def get_stock_order_ratio(stocks) -> list[dict[str, Any]]:
     # outputs = []
     # output = Output("005930", "삼성전자", 1)
     # outputs.append(output.to_dict())
-
     return outputs
 
 
-okt = Okt()
 
-
-def okt_tokenizer(text):
-    tokens = okt.morphs(text)
-    return tokens
 
 
 title_list = []

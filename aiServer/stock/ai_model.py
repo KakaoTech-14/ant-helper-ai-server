@@ -370,7 +370,7 @@ def calculate_stock_amounts(predicted_results: dict, amount: float) -> dict:
         company_name = order['company_name']
         rate = order['in_de_rate'] / total_in_de_rate  # 종목별 구매 비율
         allocated_amount = amount * rate  # 종목별 할당된 예산
-        stock_num = allocated_amount // predicted_results[company_name]['today_price']  # 몇 주를 구매할 수 있는지
+        stock_num = allocated_amount // predicted_results[company_name]['today_price']  # 총 몇 주를 구매할 수 있는지
         
         order['rate'] = rate * 100
         order['stock_amount'] = allocated_amount

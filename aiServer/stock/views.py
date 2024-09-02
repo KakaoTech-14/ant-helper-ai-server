@@ -15,7 +15,11 @@ def stock_evaluate(request) -> JsonResponse:
     amount = request.data['amount']  # 사용 가능 금액
 
     response = get_stock_order_ratio(stocks)
-
     print(response)
 
     return JsonResponse({"stocks": response}, safe=True)
+
+    """predicted_results = get_stock_order_ratio(stocks)
+    stock_orders = calculate_stock_amounts(predicted_results, amount)
+
+    return JsonResponse({"stocks": stock_orders}, safe=True)"""

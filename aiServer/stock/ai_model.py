@@ -6,9 +6,11 @@ import joblib
 import numpy as np
 import pandas as pd
 import requests
+import datetime
 from bs4 import BeautifulSoup
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+
 
 
 
@@ -25,7 +27,7 @@ class Output:
             "quantity": self.quantity,
         }
 
-
+"""
 # 요청된 주식 목록에 따라 각 주식의 구매 비율을 리턴하는 메서드
 def get_stock_order_ratio(stocks) -> list[dict[str, Any]]:
     open_dif_data_list = start_predict(stocks)
@@ -33,14 +35,27 @@ def get_stock_order_ratio(stocks) -> list[dict[str, Any]]:
     print(newslabel_match_openchange)
 
     outputs = predict_result(newslabel_match_openchange, open_dif_data_list)
-
     # outputs = []
     # output = Output("005930", "삼성전자", 1)
     # outputs.append(output.to_dict())
-    return outputs
+    return outputs"""
 
-
-
+def get_stock_order_ratio(stocks) -> list[dict[str, Any]]:
+    open_dif_data_list = start_predict(stocks)
+    newslabel_match_openchange = predict_add_news_label(open_dif_data_list)
+    
+    # 예측 결과 얻기 (내일의 시가와 오늘의 시가 포함)
+    predicted_results = predict_result(newslabel_match_openchange, open_dif_data_list)
+    
+    outputs = []
+    for company_name, prices in predicted_results.items():
+        output = Output(
+            product_number=stocks[company_name]['productNumber'],  # 회사코드
+            name=company_name,  # 회사 이름
+            quantity=0  # 몇 주 구매할지 나타남
+        )
+        outputs.append(output.to_dict())
+    
 
 
 title_list = []
@@ -169,10 +184,16 @@ def predict_result(newslabel_match_openchange, open_dif_data_list):
         company_name = list(newslabel_match_openchange.keys())[i]
         data = list(newslabel_match_openchange.values())[i]
         raw_data = list(open_dif_data_list.values())[i]
-        # Handle potential errors gracefully
+
         try:
             model = make_model(raw_data, company_name)
-            predicted_stock_openprice[company_name] = predicted_tomorrow_openprice(data, company_name, model)
+            predicted_price = predicted_tomorrow_openprice(data, company_name, model)
+            today_price = get_today_open_price(company_name)  # 오늘의 시가 가져오기 추가함
+            if predicted_price != 0:
+                predicted_stock_openprice[company_name] = {
+                    "predicted_price": predicted_price,
+                    "today_price": today_price
+                }
         except (IndexError, KeyError) as e:
             print(f"Warning: Skipping {company_name} due to error: {e}")
 
@@ -201,7 +222,7 @@ def make_diff(df):
     return data
 
 
-# 2번. 최신 뉴스 감정분석 라벨 붙이기
+# 4번. 최신 뉴스 감정분석 라벨 붙이기
 def add_news_label(data, name):
     today_news_title = []
     today_date_list = []
@@ -236,7 +257,7 @@ def add_news_label(data, name):
     return newslabel_match_openchange
 
 
-# 3번. 모델 만들기
+# 5번. 모델 만들기
 def make_model(data, name):
     today_news_title = []
     today_date_list = []
@@ -301,7 +322,7 @@ def make_model(data, name):
     return model
 
 
-# 4번. 내일 시가 예측
+# 6번. 내일 시가 예측
 def predicted_tomorrow_openprice(data, name, model):
     model = model
 
@@ -325,3 +346,34 @@ def predicted_tomorrow_openprice(data, name, model):
     predicted_price = model.predict(input_data)
 
     return int(predicted_price[0])
+
+#7 오늘 시가 받아오기
+def calculate_stock_amounts(predicted_results: dict, amount: float) -> dict:
+    stock_orders = []
+    
+    for company_name, prices in predicted_results.items():
+        predicted_price = prices['predicted_price']
+        today_price = prices['today_price']
+        
+        in_de_rate = (predicted_price - today_price) / today_price * 100
+        
+        # 매수/매도 판단 (증가율이 양수일 때만 매수)
+        if in_de_rate > 0:
+            stock_order = {}
+            stock_order['company_name'] = company_name
+            stock_order['in_de_rate'] = in_de_rate
+            stock_orders.append(stock_order)
+    
+    total_in_de_rate = sum(order['in_de_rate'] for order in stock_orders)
+    
+    for order in stock_orders:
+        company_name = order['company_name']
+        rate = order['in_de_rate'] / total_in_de_rate  # 종목별 구매 비율
+        allocated_amount = amount * rate  # 종목별 할당된 예산
+        stock_num = allocated_amount // predicted_results[company_name]['today_price']  # 몇 주를 구매할 수 있는지
+        
+        order['rate'] = rate * 100
+        order['stock_amount'] = allocated_amount
+        order['stock_num'] = int(stock_num)
+    
+    return stock_orders

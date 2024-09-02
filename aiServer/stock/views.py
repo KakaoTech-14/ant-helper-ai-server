@@ -16,4 +16,6 @@ def stock_evaluate(request) -> JsonResponse:
 
     response = get_stock_order_ratio(stocks)
 
+    print(response)
+
     return JsonResponse({"stocks": response}, safe=True)

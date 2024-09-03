@@ -79,6 +79,7 @@ jobs:
         # 서버에 접속하여 작업 수행
         ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
           cd /home/ubuntu/aiServer || exit 1
+          if pgrep gunicorn; then pkill gunicorn; fi  # 기존 gunicorn 프로세스 종료
           python3 -m venv venv
           source venv/bin/activate
           python -m pip install --upgrade pip
@@ -86,6 +87,5 @@ jobs:
           nohup gunicorn --bind 0.0.0.0:8000 aiServer.wsgi:application &
           sudo service nginx restart
         EOF
-        
         # 사용된 키 삭제
         rm key.pem

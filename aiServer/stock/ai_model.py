@@ -232,6 +232,7 @@ def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif
         except (IndexError, KeyError) as e:
             print(f"Warning: Skipping {company_name} due to error: {e}")
 
+
     return predicted_stock_openprice
 
 
@@ -292,6 +293,7 @@ def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amou
             }
             stock_orders.append(stock_order)
 
+    stock_orders.sort(key=lambda x: x['increase_decrease_rate'], reverse=True)
     total_increase_decrease_rate = sum(order['increase_decrease_rate'] for order in stock_orders)
 
     for order in stock_orders:
@@ -311,3 +313,10 @@ def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amou
         order['name'] = company_name
 
     return stock_orders
+
+
+def get_stocklist_top50(predicted_results: Dict[str, Dict[str, float]], stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    sorted_stock_orders = calculate_stock_amounts(predicted_results, 0, stocks)
+    top_50_stocks = sorted_stock_orders[:50]
+
+    return top_50_stocks

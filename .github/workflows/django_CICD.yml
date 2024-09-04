@@ -45,6 +45,7 @@ jobs:
           
           ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
             mkdir -p /home/ubuntu/aiServer/logs
+            mkdir -p /home/ubuntu/aiServer/staticfiles
           EOF
           
           scp -o StrictHostKeyChecking=no -i key.pem -r ./aiServer $EC2_USER@$EC2_HOST:/home/ubuntu/
@@ -67,7 +68,10 @@ jobs:
           ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
             cd /home/ubuntu/aiServer
             
-            pkill gunicorn || true
+            # STATIC_ROOT 설정 추가
+            echo "STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')" >> aiServer/settings.py
+            
+            pkill -9 gunicorn || true
             
             python3 -m venv venv
             source venv/bin/activate
@@ -83,6 +87,8 @@ jobs:
               --timeout 120 \
               --access-logfile logs/gunicorn-access.log \
               --error-logfile logs/gunicorn-error.log &
+            
+            sleep 10
             
             sudo service nginx restart
             

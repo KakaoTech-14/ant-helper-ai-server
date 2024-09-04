@@ -1,99 +1,61 @@
 name: Django CI/CD
-
 on:
   push:
     branches: ["main"]
-
 jobs:
   build:
     runs-on: ubuntu-latest
-
     steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Set up Python 3.10
-      uses: actions/setup-python@v3
-      with:
-        python-version: '3.10'
-
-    - name: Install Dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install django djangorestframework drf-yasg
-      working-directory: aiServer
-
-  upload:
-    runs-on: ubuntu-latest
-    needs: build
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Create secrets.json
-      uses: jsdaniell/create-json@1.1.2
-      with:
-        name: "secrets.json"
-        json: ${{ secrets.SECRETS }}
-
-    - name: Upload Code to EC2
-      env:
-        EC2_HOST: ${{ secrets.EC2_HOST }}
-        EC2_USER: ubuntu
-        EC2_KEY: ${{ secrets.EC2_KEY }}
-      run: |
-        echo "${{ secrets.EC2_KEY }}" > key.pem
-        chmod 400 key.pem
-        
-        # 서버에서 디렉토리 생성 여부 확인 및 생성
-        ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
-          if [ ! -d "/home/ubuntu/aiServer" ]; then
-            mkdir -p /home/ubuntu/aiServer
-          fi
-          if [ ! -d "/home/ubuntu/aiServer/logs" ]; then
-            mkdir -p /home/ubuntu/aiServer/logs
-          fi
-        EOF
-        
-        # 코드 및 secrets.json 업로드
-        scp -o StrictHostKeyChecking=no -i key.pem -r ./aiServer $EC2_USER@$EC2_HOST:/home/ubuntu/
-        scp -o StrictHostKeyChecking=no -i key.pem ./secrets.json $EC2_USER@$EC2_HOST:/home/ubuntu/aiServer/
-        
-        rm key.pem
-
-  deploy:
-    runs-on: ubuntu-latest
-    needs: upload
-
-    steps:
-    - name: Checkout code
-      uses: actions/checkout@v4
-
-    - name: Deploy Code to EC2
-      env:
-        EC2_HOST: ${{ secrets.EC2_HOST }}
-        EC2_USER: ubuntu
-        EC2_KEY: ${{ secrets.EC2_KEY }}
-      run: |
-        echo "${{ secrets.EC2_KEY }}" > key.pem
-        chmod 400 key.pem
-        
-        # 서버에 접속하여 작업 수행
-        ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
-          cd /home/ubuntu/aiServer || exit 1
-          if pgrep gunicorn; then pkill gunicorn; fi  # 기존 gunicorn 프로세스 종료
-          
-          python3 -m venv venv
-          source venv/bin/activate
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v3
+        with:
+          python-version: '3.10'
+      - name: Install Dependencies
+        run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          
-          nohup gunicorn --bind 0.0.0.0:8000 aiServer.wsgi:application \
-            --access-logfile /home/ubuntu/aiServer/logs/gunicorn-access.log \
-            --error-logfile /home/ubuntu/aiServer/logs/gunicorn-error.log &
-          sudo service nginx restart
-        EOF
-        
-        # 사용된 키 삭제
-        rm key.pem
+        working-directory: aiServer
+  deploy:
+    runs-on: ubuntu-latest
+    needs: build
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+      - name: Create secrets.json
+        uses: jsdaniell/create-json@1.1.2
+        with:
+          name: "secrets.json"
+          json: ${{ secrets.SECRETS }}
+      - name: Deploy to EC2
+        env:
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ubuntu
+          EC2_KEY: ${{ secrets.EC2_KEY }}
+        run: |
+          echo "$EC2_KEY" > key.pem
+          chmod 400 key.pem
+          scp -o StrictHostKeyChecking=no -i key.pem -r ./aiServer $EC2_USER@$EC2_HOST:/home/ubuntu/
+          scp -o StrictHostKeyChecking=no -i key.pem ./secrets.json $EC2_USER@$EC2_HOST:/home/ubuntu/aiServer/
+          ssh -o StrictHostKeyChecking=no -i key.pem $EC2_USER@$EC2_HOST << EOF
+            cd /home/ubuntu/aiServer
+            if [ ! -d "venv" ]; then
+              python3 -m venv venv
+            fi
+            source venv/bin/activate
+            pip install --upgrade pip
+            pip install -r requirements.txt
+            python manage.py collectstatic --noinput
+            python manage.py migrate
+            if pgrep gunicorn; then
+              pkill gunicorn
+            fi
+            nohup gunicorn --bind 0.0.0.0:8000 aiServer.wsgi:application \
+              --workers 3 \
+              --timeout 120 \
+              --access-logfile /home/ubuntu/aiServer/logs/gunicorn-access.log \
+              --error-logfile /home/ubuntu/aiServer/logs/gunicorn-error.log &
+            sudo systemctl restart nginx
+          EOF
+          rm key.pem

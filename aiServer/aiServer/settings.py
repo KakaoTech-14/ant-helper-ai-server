@@ -154,3 +154,7 @@ CORS_ALLOW_HEADERS = (
     'x-csrftoken',
     'x-requested-with',
 )
+
+REST_FRAMEWORK = {
+    'EXCEPTION_HANDLER': 'common.custom_exception_handler.custom_exception_handler',
+}

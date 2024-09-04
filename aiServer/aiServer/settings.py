@@ -31,7 +31,7 @@ SECRET_KEY = get_secret("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['https://www.api.ant.helper.com', 'https://api.ant.helper.com', '127.0.0.1', '0.0.0.0', 'localhost']
+ALLOWED_HOSTS = ['www.api.ant.helper.com', 'api.ant.helper.com', '52.78.54.137', '127.0.0.1', '0.0.0.0', 'localhost']
 
 INSTALLED_APPS = [
     'django.contrib.admin',

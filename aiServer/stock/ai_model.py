@@ -1,3 +1,5 @@
+import math
+import pickle
 from typing import List, Dict, Any
 import datetime
 import FinanceDataReader as fdr
@@ -8,6 +10,7 @@ import requests
 from bs4 import BeautifulSoup
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+from .models import NewsData, StockModelInfo  # NewsData, StockModelInfo 모델 임포트
 
 
 class Output:
@@ -22,12 +25,6 @@ class Output:
             'name': self.name,
             "quantity": self.quantity,
         }
-
-
-open_dif_data_list = []
-newslabel_match_openchange = []
-predicted_results = []
-stock_orders = []
 
 
 def get_stock_order_ratio(amount: int, stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -55,8 +52,7 @@ def get_stock_order_ratio(amount: int, stocks: List[Dict[str, Any]]) -> List[Dic
 
 
 def prepare_stock_data(stocks: List[Dict[str, Any]]) -> List[tuple]:
-    start = (2000, 1, 1)
-    start = datetime.datetime(*start)
+    start = datetime.datetime(2000, 1, 1)
     end = datetime.date.today()
 
     open_dif_data_list = []
@@ -72,46 +68,9 @@ def prepare_stock_data(stocks: List[Dict[str, Any]]) -> List[tuple]:
 def calculate_open_diff(df: pd.DataFrame) -> pd.DataFrame:
     data = df['Open'][df['Volume'] != 0]
     data = data.to_frame()
-    open_dif = []
-
-    for i in range(len(data)):
-        if i == 0:
-            open_dif.append(0)
-        else:
-            open_dif.append(data['Open'].iloc[i] - data['Open'].iloc[i - 1])
-    data['Change'] = open_dif
+    data['Change'] = data['Open'].diff().fillna(0)  # 더 간단하게 수정
 
     return data
-
-
-def scrape_news_titles_and_dates(url_base: str, page_count: int):
-    title_list = []
-    date_list = []
-
-    for i in range(1, page_count + 1):
-        url = url_base if i == 1 else f'{url_base}/New/{i}'
-        response = requests.get(url)
-        response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser')
-
-        titles = soup.select('.article_tit')
-        dates = soup.select('.date')
-        rel_times = soup.select('.rel_time')
-
-        for title in titles:
-            title_list.append(title.get_text())
-        for rel_time in rel_times:
-            date_list.append(rel_time.get_text())
-        for date in dates:
-            date_list.append(date.get_text())
-
-    return title_list, date_list
-
-
-news_url_base = 'https://www.sedaily.com/NewsList/GD05'
-
-title_list, date_list = scrape_news_titles_and_dates(news_url_base, 100)
-makemodel_title_list, makemodel_date_list = scrape_news_titles_and_dates(news_url_base, 200)
 
 
 def predict_add_news_label(open_dif_data_list: List[tuple]) -> Dict[str, pd.DataFrame]:
@@ -124,21 +83,13 @@ def predict_add_news_label(open_dif_data_list: List[tuple]) -> Dict[str, pd.Data
 
 
 def add_news_label(data: pd.DataFrame, name: str) -> pd.DataFrame:
-    today_news_title = []
-    today_date_list = []
+    today_news_data = NewsData.objects.filter(title__contains=name)
+    today_news_title_date = pd.DataFrame(list(today_news_data.values('title', 'date')))
+    today_news_title_date.rename(columns={'date': 'Date'}, inplace=True)
 
-    for i in range(len(title_list)):
-        if name in title_list[i]:
-            today_news_title.append(title_list[i])
-            today_date_list.append(date_list[i])
-
-    today_news_title_date = pd.DataFrame({'title': today_news_title, 'Date': today_date_list})
-    today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date'])
-
-    if len(today_news_title) == 0:
-        today_news_title_date['title_label'] = 0
-        newslabel_match_openchange = pd.merge(today_news_title_date, data, on='Date')
-        return newslabel_match_openchange
+    if today_news_title_date.empty:
+        data['title_label'] = 0
+        return data
 
     SA_lr_best = joblib.load('./static/SA_lr_best.pkl')
     tfidf = joblib.load('./static/tfidf.pkl')
@@ -146,111 +97,137 @@ def add_news_label(data: pd.DataFrame, name: str) -> pd.DataFrame:
     today_data_title_predict = SA_lr_best.predict(today_data_title_tfidf)
     today_news_title_date['title_label'] = today_data_title_predict
 
-    newslabel_match_openchange = pd.merge(today_news_title_date, data, on='Date')
+    newslabel_match_openchange = pd.merge(today_news_title_date[['Date', 'title_label']], data, on='Date', how='right')
     return newslabel_match_openchange
 
 
+import os  # os 모듈 추가
+
 def make_model(data: pd.DataFrame, name: str) -> LinearRegression:
-    today_news_title = []
-    today_date_list = []
-    for i in range(len(makemodel_title_list)):
-        if name in makemodel_title_list[i]:
-            today_news_title.append(makemodel_title_list[i])
-            today_date_list.append(makemodel_date_list[i])
+    if data is None or len(data) <= 1:
+        print(f"Insufficient data for training model for {name}")
+        return joblib.load('./static/tomorrow_stock.pkl')
 
-    today_news_title_date = pd.DataFrame({'title': today_news_title, 'Date': today_date_list})
-    today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date'])
-
-    if len(today_news_title) == 0:
-        tomorrow_stock = joblib.load('./static/tomorrow_stock.pkl')
-        return tomorrow_stock
-
-    SA_lr_best = joblib.load('./static/SA_lr_best.pkl')
-    tfidf = joblib.load('./static/tfidf.pkl')
-    today_data_title_tfidf = tfidf.transform(today_news_title_date['title'])
-    today_data_title_predict = SA_lr_best.predict(today_data_title_tfidf)
-    today_news_title_date['title_label'] = today_data_title_predict
-
-    newslabel_match_openchange = pd.merge(today_news_title_date, data, on='Date')
-    sentiments = newslabel_match_openchange['title_label']
-    weights = np.random.rand(len(newslabel_match_openchange))
-
-    if sum(weights) == 0:
-        weights[0] = weights[0] + 0.5104
-    weighted_avg = calculate_weighted_average(sentiments, weights)
-
-    label_dif = list()
-
-    for i in range(len(newslabel_match_openchange)):
-        label_dif.append([newslabel_match_openchange['title_label'][i], newslabel_match_openchange['Change'][i]])
-
-    ylist = list()
-
-    for i in range(len(newslabel_match_openchange)):
-        ylist.append(newslabel_match_openchange['Open'][i])
-
-    X = np.array(label_dif)
-    y = np.array(ylist)
-
-    if len(X) <= 1:
-        tomorrow_stock = joblib.load('./static/tomorrow_stock.pkl')
-        return tomorrow_stock
+    X = data[['title_label', 'Change']].values
+    y = data['Open'].values
 
     X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
     model = LinearRegression()
     model.fit(X_train, y_train)
 
+    # 모델 저장 경로 설정
+    model_directory = 'models'
+    model_file_path = f'{model_directory}/{name}_model.pkl'
+
+    # 디렉토리 존재 여부 확인 및 생성
+    if not os.path.exists(model_directory):
+        os.makedirs(model_directory)
+
+    # 모델 저장
+    with open(model_file_path, 'wb') as f:
+        pickle.dump(model, f)
+
+    # StockModelInfo 데이터베이스 업데이트
+    StockModelInfo.objects.update_or_create(stock_name=name, defaults={'model_file_path': model_file_path})
+
     return model
+
 
 
 def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif_data_list: List[tuple], stocks) -> Dict[str, Dict[str, float]]:
     predicted_stock_openprice = {}
 
-    stock_code = ''
     for company_name, data in newslabel_match_openchange.items():
-        # open_dif_data_list에서 company_name에 맞는 데이터를 찾아서 사용
-        for stock in stocks:
-            if company_name == stock['name']:
-                stock_code = stock['productNumber']
-
-        raw_data = next((item[1] for item in open_dif_data_list if item[0] == company_name), None)
-
-        if raw_data is None:
-            print(f"Warning: Data for {company_name} not found in open_dif_data_list")
+        stock_code = next((stock['productNumber'] for stock in stocks if stock['name'] == company_name), None)
+        if not stock_code:
+            print(f"Stock code for {company_name} not found.")
             continue
 
-        try:
-            model = make_model(raw_data, company_name)
+        model = make_model(data, company_name)
+        if model is not None:
             predicted_price = predicted_tomorrow_openprice(data, company_name, model)
-            today_price = get_today_open_price(stock_code)  # 오늘의 시가 가져오기 추가함
-            if predicted_price != 0:
+            today_price = get_today_open_price(stock_code)
+            if today_price is not None:
                 predicted_stock_openprice[company_name] = {
                     "predicted_price": predicted_price,
                     "today_price": today_price
                 }
-        except (IndexError, KeyError) as e:
-            print(f"Warning: Skipping {company_name} due to error: {e}")
-
 
     return predicted_stock_openprice
 
 
 def predicted_tomorrow_openprice(data: pd.DataFrame, name: str, model: LinearRegression) -> int:
-    if np.isnan(data['title_label'].iloc[0]):
+    if data['title_label'].isna().any():
         return 0
 
-    weight_seed = len(data['title_label'])
-    sentiments = data['title_label']
-    weights = np.random.rand(weight_seed)
-
-    if sum(weights) == 0:
-        weights[0] = weights[0] + 0.5104
-    weighted_avg = calculate_weighted_average(sentiments, weights)
-    input_data = np.array([weighted_avg, weights if np.isscalar(weights) else weights[0]]).reshape(1, -1)
-    predicted_price = model.predict(input_data)
+    X_last = data[['title_label', 'Change']].values[-1].reshape(1, -1)
+    predicted_price = model.predict(X_last)
 
     return int(predicted_price[0])
+
+
+def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amount: float, stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    stock_orders = []
+
+    # 상승 비율 계산 및 필터링 (0 이하 제거)
+    for company_name, prices in predicted_results.items():
+        predicted_price = prices['predicted_price']
+        today_price = prices['today_price']
+
+        if today_price == 0:
+            print(f"Skipping {company_name} due to today_price being 0.")
+            continue
+
+        # 상승률 계산
+        increase_decrease_rate = (predicted_price - today_price) / today_price * 100
+
+        # 상승률이 0 이하인 경우는 제외
+        if increase_decrease_rate > 0:
+            stock_order = {
+                'name': company_name,
+                'increase_decrease_rate': increase_decrease_rate
+            }
+            stock_orders.append(stock_order)
+
+    # 상승률로 정렬 (내림차순)
+    stock_orders.sort(key=lambda x: x['increase_decrease_rate'], reverse=True)
+    total_increase_decrease_rate = sum(order['increase_decrease_rate'] for order in stock_orders)
+
+    # 상승률이 양수인 주식이 없는 경우 처리
+    if total_increase_decrease_rate == 0:
+        print("No stocks with a positive increase rate. Check model predictions and data.")
+        return []
+
+    for order in stock_orders:
+        company_name = order['name']
+        rate = order['increase_decrease_rate'] / total_increase_decrease_rate
+        allocated_amount = amount * rate
+        today_price = predicted_results[company_name]['today_price']
+
+        # 주식 수량 계산 (할당된 금액 기준)
+        quantity = math.floor(allocated_amount / today_price)
+        stock_code = next(stock['productNumber'] for stock in stocks if stock['name'] == company_name)
+
+        order['quantity'] = int(quantity)
+        order['productNumber'] = stock_code
+
+        # 디버깅 정보 출력
+        print(f"Order for {company_name}: Quantity: {order['quantity']}, Allocated Amount: {allocated_amount:.2f}, Rate: {rate:.2f}")
+
+    return stock_orders
+
+
+
+def get_today_open_price(stock_code: str) -> float:
+    today = datetime.date.today().strftime('%Y-%m-%d')
+    df = fdr.DataReader(stock_code, today, today)
+
+    if not df.empty:
+        return df['Open'].iloc[0]
+    else:
+        print(f"오늘의 시가 데이터를 찾을 수 없습니다: {stock_code}")
+        return None
 
 
 def calculate_weighted_average(sentiments: np.ndarray, weights: np.ndarray) -> float:
@@ -266,57 +243,30 @@ def calculate_weighted_average(sentiments: np.ndarray, weights: np.ndarray) -> f
     return weighted_sum / total_weight
 
 
-def get_today_open_price(stock_code: str) -> float:
-    today = datetime.datetime.today().strftime('%Y-%m-%d')
-    df = fdr.DataReader(stock_code, today, today)
+def crawl_and_store_news_data(url_base: str, page_count: int) -> (List[str], List[str]):
+    """
+    주어진 URL 베이스와 페이지 수를 기반으로 뉴스를 크롤링하고 DB에 저장하는 함수
+    """
+    title_list = []
+    date_list = []
 
-    if not df.empty:
-        return df['Open'].iloc[0]
-    else:
-        print(f"오늘의 시가 데이터를 찾을 수 없습니다: {stock_code}")
-        return None
+    for i in range(1, page_count + 1):
+        url = url_base if i == 1 else f'{url_base}/New/{i}'
+        response = requests.get(url)
+        response.raise_for_status()
+        soup = BeautifulSoup(response.content, 'html.parser')
 
+        titles = soup.select('.article_tit')
+        rel_times = soup.select('.rel_time')
 
-def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amount: float, stocks) -> List[Dict[str, Any]]:
-    stock_orders = []
-    stock_code = ''
-    for company_name, prices in predicted_results.items():
-        predicted_price = prices['predicted_price']
-        today_price = prices['today_price']
+        for title, date in zip(titles, rel_times):
+            title_text = title.get_text().strip()
+            date_text = datetime.datetime.strptime(date.get_text().strip(), '%Y.%m.%d').date()
 
-        increase_decrease_rate = (predicted_price - today_price) / today_price * 100
+            # 중복 검사 후 DB에 저장
+            if not NewsData.objects.filter(title=title_text, date=date_text).exists():
+                NewsData.objects.create(title=title_text, date=date_text)
+                title_list.append(title_text)
+                date_list.append(date_text)
 
-        if increase_decrease_rate > 0:
-            stock_order = {
-                'name': company_name,
-                'increase_decrease_rate': increase_decrease_rate
-            }
-            stock_orders.append(stock_order)
-
-    stock_orders.sort(key=lambda x: x['increase_decrease_rate'], reverse=True)
-    total_increase_decrease_rate = sum(order['increase_decrease_rate'] for order in stock_orders)
-
-    for order in stock_orders:
-        company_name = order['name']
-        rate = order['increase_decrease_rate'] / total_increase_decrease_rate
-        allocated_amount = amount * rate
-        quantity = allocated_amount // predicted_results[company_name]['today_price']
-
-        for stock in stocks:
-            if stock['name'] == company_name:
-                stock_code = stock['productNumber']
-
-        # order['rate'] = rate * 100
-        # order['stock_amount'] = allocated_amount
-        order['quantity'] = int(quantity)
-        order['productNumber'] = stock_code
-        order['name'] = company_name
-
-    return stock_orders
-
-
-def get_stocklist_top50(predicted_results: Dict[str, Dict[str, float]], stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    sorted_stock_orders = calculate_stock_amounts(predicted_results, 0, stocks)
-    top_50_stocks = sorted_stock_orders[:50]
-
-    return top_50_stocks
+    return title_list, date_list

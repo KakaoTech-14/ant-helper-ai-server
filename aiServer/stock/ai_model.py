@@ -1,5 +1,5 @@
 from typing import List, Dict, Any
-import datetime
+from datetime import datetime
 import FinanceDataReader as fdr
 import joblib
 import numpy as np
@@ -8,7 +8,9 @@ import requests
 from bs4 import BeautifulSoup
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
-
+from .models import NewsData
+import pickle
+from .models import StockModelInfo
 
 class Output:
     def __init__(self, product_number, name, quantity):
@@ -35,9 +37,15 @@ def get_stock_order_ratio(amount: int, stocks: List[Dict[str, Any]]) -> List[Dic
         stock_code = stock['productNumber']
         today_price = get_today_open_price(stock_code)
         stock['today_price'] = today_price
+        
 
     open_dif_data_list = prepare_stock_data(stocks)
     print("open_dif_data_list" + str(open_dif_data_list))
+
+    # 모델 만드는 코드
+    for i in range(len(stocks)):
+        make_model(next((item[1] for item in open_dif_data_list if item[0] == stocks[i]['name']), None), stocks[i]['name'])
+
     newslabel_match_openchange = predict_add_news_label(open_dif_data_list)
     print("newslabel_match_openchange=" + str(newslabel_match_openchange))
 
@@ -84,34 +92,47 @@ def calculate_open_diff(df: pd.DataFrame) -> pd.DataFrame:
     return data
 
 
-def scrape_news_titles_and_dates(url_base: str, page_count: int):
+def scrape_news_titles_and_dates():
     title_list = []
     date_list = []
+    url_base = 'https://www.sedaily.com/NewsList/GD05'
 
-    for i in range(1, page_count + 1):
+    # Get existing data from the database
+    existing_news = NewsData.objects.all()
+    existing_titles_dates = set((news.title, news.date) for news in existing_news)
+
+    for i in range(1, 5):
         url = url_base if i == 1 else f'{url_base}/New/{i}'
         response = requests.get(url)
         response.raise_for_status()
         soup = BeautifulSoup(response.content, 'html.parser')
-
+        
         titles = soup.select('.article_tit')
         dates = soup.select('.date')
-        rel_times = soup.select('.rel_time')
 
         for title in titles:
-            title_list.append(title.get_text())
-        for rel_time in rel_times:
-            date_list.append(rel_time.get_text())
+            if title not in existing_titles_dates:
+                title_list.append(title.get_text())
         for date in dates:
-            date_list.append(date.get_text())
+            if date not in existing_titles_dates:
+                date = datetime.strptime(date.get_text(), '%Y.%m.%d').date()
+                date_list.append(date)
+
+        for i in range(min(len(title_list), len(date_list))):
+            # 기존 데이터 확인
+            if not NewsData.objects.filter(title=title_list[i], date=date_list[i]).exists():
+                # 데이터가 없을 때만 저장
+                news_data = NewsData(title=title_list[i], date=date_list[i])
+                news_data.save()
+            else:
+                print(f"Duplicate entry found for title: {title_list[i]}, date: {date_list[i]}. Skipping insertion.")
 
     return title_list, date_list
 
+# news_url_base = 'https://www.sedaily.com/NewsList/GD05'
 
-news_url_base = 'https://www.sedaily.com/NewsList/GD05'
-
-title_list, date_list = scrape_news_titles_and_dates(news_url_base, 100)
-makemodel_title_list, makemodel_date_list = scrape_news_titles_and_dates(news_url_base, 200)
+# title_list, date_list = scrape_news_titles_and_dates(news_url_base, 100)
+# makemodel_title_list, makemodel_date_list = scrape_news_titles_and_dates(news_url_base, 200)
 
 
 def predict_add_news_label(open_dif_data_list: List[tuple]) -> Dict[str, pd.DataFrame]:
@@ -127,10 +148,17 @@ def add_news_label(data: pd.DataFrame, name: str) -> pd.DataFrame:
     today_news_title = []
     today_date_list = []
 
-    for i in range(len(title_list)):
-        if name in title_list[i]:
-            today_news_title.append(title_list[i])
-            today_date_list.append(date_list[i])
+    scrape_news_titles_and_dates()
+
+    # 데이터베이스의 데이터 중 절반만 쿼리
+    half_data = NewsData.objects.all()[:NewsData.objects.count() // 2]
+
+    # 절반 데이터를 출력하거나 처리
+    for data in half_data:
+        # print(data.title, data.date)
+        if name in data.title:
+            today_news_title.append(data.title)
+            today_date_list.append(data.date)
 
     today_news_title_date = pd.DataFrame({'title': today_news_title, 'Date': today_date_list})
     today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date'])
@@ -147,16 +175,20 @@ def add_news_label(data: pd.DataFrame, name: str) -> pd.DataFrame:
     today_news_title_date['title_label'] = today_data_title_predict
 
     newslabel_match_openchange = pd.merge(today_news_title_date, data, on='Date')
+    print(newslabel_match_openchange)
     return newslabel_match_openchange
 
 
 def make_model(data: pd.DataFrame, name: str) -> LinearRegression:
     today_news_title = []
     today_date_list = []
-    for i in range(len(makemodel_title_list)):
-        if name in makemodel_title_list[i]:
-            today_news_title.append(makemodel_title_list[i])
-            today_date_list.append(makemodel_date_list[i])
+
+    all_news_data = NewsData.objects.all()
+
+    for data in all_news_data:
+        if name in data.title:
+            today_news_title.append(data.title)
+            today_date_list.append(data.date)
 
     today_news_title_date = pd.DataFrame({'title': today_news_title, 'Date': today_date_list})
     today_news_title_date['Date'] = pd.to_datetime(today_news_title_date['Date'])
@@ -201,7 +233,38 @@ def make_model(data: pd.DataFrame, name: str) -> LinearRegression:
     model = LinearRegression()
     model.fit(X_train, y_train)
 
-    return model
+    if StockModelInfo.objects.filter(stock_name=name).exists():
+        print(f"Model for stock {name} already exists. Skipping save.")
+        return
+
+    # 데이터베이스에 모델 저장
+    model_file_path = f'models/{name}_model.pkl'
+
+    # Save the model to a .pkl file
+    with open(model_file_path, 'wb') as f:
+        pickle.dump(model, f)
+
+    # Save the model information to the database
+    StockModelInfo.objects.update_or_create(
+        stock_name=name,
+        defaults={'model_file_path': model_file_path}
+    )
+
+
+def load_stock_model(name: str):
+    try:
+        # Retrieve the model information from the database
+        stock_model_info = StockModelInfo.objects.get(stock_name=name)
+        model_file_path = stock_model_info.model_file_path
+
+        # Load the model from the file
+        with open(model_file_path, 'rb') as f:
+            model = pickle.load(f)
+
+        return model
+    except StockModelInfo.DoesNotExist:
+        print(f"No model found for stock: {name}")
+        return None
 
 
 def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif_data_list: List[tuple], stocks) -> Dict[str, Dict[str, float]]:
@@ -221,7 +284,7 @@ def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif
             continue
 
         try:
-            model = make_model(raw_data, company_name)
+            model = load_stock_model(company_name)
             predicted_price = predicted_tomorrow_openprice(data, company_name, model)
             today_price = get_today_open_price(stock_code)  # 오늘의 시가 가져오기 추가함
             if predicted_price != 0:

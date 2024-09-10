@@ -31,6 +31,11 @@ jobs:
         name: "secrets.json"
         json: ${{ secrets.SECRETS }}
         dir: 'aiServer'
+        
+    - name: Create my_settings.py
+      run: |
+        echo "${{ secrets.DB_SETTINGS }}" > aiServer/aiServer/my_settings.py
+            
     - name: Upload Code to EC2
       env:
         EC2_HOST: ${{ secrets.EC2_HOST }}

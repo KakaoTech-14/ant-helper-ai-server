@@ -2,16 +2,19 @@ name: Django CI/CD
 on:
   push:
     branches: ["main"]
+
 jobs:
   build:
     runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
     - name: Set up Python 3.10
       uses: actions/setup-python@v3
       with:
         python-version: '3.10'
+
     - name: Install Dependencies
       run: |
         python -m pip install --upgrade pip
@@ -25,6 +28,7 @@ jobs:
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
+
     - name: Create secrets.json
       uses: jsdaniell/create-json@1.1.2
       with:
@@ -35,7 +39,7 @@ jobs:
     - name: Create my_settings.py
       run: |
         echo "${{ secrets.DB_SETTINGS }}" > aiServer/aiServer/my_settings.py
-            
+
     - name: Upload Code to EC2
       env:
         EC2_HOST: ${{ secrets.EC2_HOST }}
@@ -67,11 +71,9 @@ jobs:
         pkill -9 gunicorn || true
         
         sudo apt update
-        sudo apt install -y python3.10
-        sudo update-alternatives --install /usr/bin/python3 python3 /usr/bin/python3.10 1
-        sudo update-alternatives --config python3 <<< "0"
         
-        sudo apt-get install -y python3-apt
+        # 필수 패키지 설치
+        sudo apt install -y build-essential libssl-dev libffi-dev python3-dev
         
         # 프로젝트 디렉토리로 이동
         cd /home/ubuntu/aiServer
@@ -79,14 +81,19 @@ jobs:
         # 가상환경 설정 및 실행
         python3 -m venv venv
         source venv/bin/activate        
+
+        # 필요한 패키지 재설치
+        pip install --force-reinstall cffi cryptography pyopenssl
           
         pip install --upgrade pip
+        pip install gunicorn django djangorestframework drf-yasg
         pip install -r requirements.txt
 
         python manage.py makemigrations
         python manage.py migrate
         python manage.py collectstatic --noinput
         
+        # Gunicorn 실행
         nohup gunicorn --bind 0.0.0.0:8000 aiServer.wsgi:application \
           --workers 3 \
           --timeout 120 \
@@ -94,8 +101,11 @@ jobs:
           --error-logfile logs/gunicorn-error.log &
         
         sleep 10
+        
+        # Nginx 재시작
         sudo service nginx restart
         
+        # 상태 확인
         echo "Checking Gunicorn processes:"
         ps aux | grep gunicorn
         
@@ -106,10 +116,6 @@ jobs:
         echo "Testing service response:"
         curl -I http://localhost:8000
         
-        echo "Checking Nginx status:"
-        sudo systemctl status nginx
-        EOF
-        rm key.pem
         echo "Checking Nginx status:"
         sudo systemctl status nginx
         EOF

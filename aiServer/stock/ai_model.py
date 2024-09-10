@@ -255,7 +255,7 @@ def crawl_and_store_news_data(url_base: str, page_count: int) -> (List[str], Lis
         soup = BeautifulSoup(response.content, 'html.parser')
 
         titles = soup.select('.article_tit')
-        rel_times = soup.select('.rel_time')
+        rel_times = soup.select('.date')
 
         for title, date in zip(titles, rel_times):
             title_text = title.get_text().strip()

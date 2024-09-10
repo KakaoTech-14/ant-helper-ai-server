@@ -33,7 +33,8 @@ SECRET_KEY = get_secret("SECRET_KEY")
 # SECURITY WARNING: don't run with debug turned on in production!
 DEBUG = True
 
-ALLOWED_HOSTS = ['www.api.ant-helper.com', 'api.ant-helper.com', 'www.ai.ant-helper.com', 'ai.ant-helper.com', '52.78.54.137', '127.0.0.1', '0.0.0.0', 'localhost']
+ALLOWED_HOSTS = ['www.api.ant-helper.com', 'api.ant-helper.com', 'www.ai.ant-helper.com', 'ai.ant-helper.com',
+                 '52.78.54.137', '127.0.0.1', '0.0.0.0', 'localhost']
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -44,7 +45,8 @@ INSTALLED_APPS = [
     'django.contrib.staticfiles',
     'drf_yasg',
     'rest_framework',
-    'stock'
+    'stock',
+    'django_apscheduler',
 ]
 
 MIDDLEWARE = [
@@ -117,14 +119,12 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.0/howto/static-files/
 
 STATIC_URL = 'static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles') # STATIC_ROOT 설정
-
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # STATIC_ROOT 설정
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.0/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
-
 
 # cors
 CORS_ORIGIN_WHITELIST = ['https://api.ant-helper.com',
@@ -157,3 +157,6 @@ CORS_ALLOW_HEADERS = (
 REST_FRAMEWORK = {
     'EXCEPTION_HANDLER': 'common.custom_exception_handler.custom_exception_handler',
 }
+
+APSCHEDULER_DATETIME_FORMAT = "N j, Y, f:s a"
+SCHEDULER_DEFAULT = True

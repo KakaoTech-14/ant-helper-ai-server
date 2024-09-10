@@ -1,7 +1,8 @@
+import datetime
 import math
 import pickle
 from typing import List, Dict, Any
-import datetime
+
 import FinanceDataReader as fdr
 import joblib
 import numpy as np
@@ -10,47 +11,49 @@ import requests
 from bs4 import BeautifulSoup
 from sklearn.linear_model import LinearRegression
 from sklearn.model_selection import train_test_split
+
+from common.exceptions import BadRequest, InternalServerError
 from .models import NewsData, StockModelInfo  # NewsData, StockModelInfo 모델 임포트
 
 
+
+# Output 클래스는 주식 주문 결과를 나타내는 데이터 구조를 제공합니다.
 class Output:
     def __init__(self, product_number, name, quantity):
         self.product_number = product_number
         self.name = name
         self.quantity = quantity
 
-    def to_dict(self):
+    def to_dict(self) -> Dict[str, Any]:
         return {
             'productNumber': self.product_number,
             'name': self.name,
-            "quantity": self.quantity,
+            'quantity': self.quantity,
         }
 
 
+# 총 자본금(amount)과 주식 목록(stocks)을 기반으로 주문 비율을 계산합니다.
 def get_stock_order_ratio(amount: int, stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    for stock in stocks:
-        stock_code = stock['productNumber']
-        today_price = get_today_open_price(stock_code)
-        stock['today_price'] = today_price
+    try:
+        for stock in stocks:
+            stock_code = stock['productNumber']
+            today_price = get_today_open_price(stock_code)
+            if today_price is None:
+                raise BadRequest(f"오늘의 시가 데이터를 찾을 수 없습니다: {stock_code}")
+            stock['today_price'] = today_price
 
-    open_dif_data_list = prepare_stock_data(stocks)
-    print("open_dif_data_list" + str(open_dif_data_list))
-    newslabel_match_openchange = predict_add_news_label(open_dif_data_list)
-    print("newslabel_match_openchange=" + str(newslabel_match_openchange))
+        open_dif_data_list = prepare_stock_data(stocks)
+        newslabel_match_openchange = predict_add_news_label(open_dif_data_list)
+        predicted_results = predict_result(newslabel_match_openchange, open_dif_data_list, stocks)
+        stock_orders = calculate_stock_amounts(predicted_results, amount, stocks)
 
-    predicted_results = predict_result(newslabel_match_openchange, open_dif_data_list, stocks)
-    print("predicted_result=" + str(predicted_results))
-    stock_orders = calculate_stock_amounts(predicted_results, amount, stocks)
-    print("stock_orders=" + str(stock_orders))
+        return [Output(order['productNumber'], order['name'], order['quantity']).to_dict() for order in stock_orders]
 
-    outputs = []
-    for order in stock_orders:
-        output = Output(order['productNumber'], order['name'], order['quantity'])
-        outputs.append(output.to_dict())
-
-    return outputs
+    except Exception as e:
+        raise InternalServerError(f"주문 비율 계산 중 오류 발생: {str(e)}")
 
 
+# 주식 목록을 기반으로 오픈 데이터 준비
 def prepare_stock_data(stocks: List[Dict[str, Any]]) -> List[tuple]:
     start = datetime.datetime(2000, 1, 1)
     end = datetime.date.today()
@@ -65,88 +68,78 @@ def prepare_stock_data(stocks: List[Dict[str, Any]]) -> List[tuple]:
     return open_dif_data_list
 
 
+# 주어진 데이터프레임에서 'Open' 가격의 변화량을 계산합니다.
 def calculate_open_diff(df: pd.DataFrame) -> pd.DataFrame:
-    data = df['Open'][df['Volume'] != 0]
-    data = data.to_frame()
-    data['Change'] = data['Open'].diff().fillna(0)  # 더 간단하게 수정
-
+    data = df[['Open']].loc[df['Volume'] != 0]
+    data['Change'] = data['Open'].diff().fillna(0)
     return data
 
 
+# 주식 데이터에 뉴스 레이블을 추가합니다.
 def predict_add_news_label(open_dif_data_list: List[tuple]) -> Dict[str, pd.DataFrame]:
-    newslabel_match_openchange = {}
-    for company_name, data in open_dif_data_list:
-        labeled_data = add_news_label(data, company_name)
-        newslabel_match_openchange[company_name] = labeled_data
-
-    return newslabel_match_openchange
+    return {company_name: add_news_label(data, company_name) for company_name, data in open_dif_data_list}
 
 
+# 뉴스 데이터를 기반으로 주식 데이터에 레이블을 추가합니다.
 def add_news_label(data: pd.DataFrame, name: str) -> pd.DataFrame:
-    today_news_data = NewsData.objects.filter(title__contains=name)
-    today_news_title_date = pd.DataFrame(list(today_news_data.values('title', 'date')))
-    today_news_title_date.rename(columns={'date': 'Date'}, inplace=True)
+    try:
+        today_news_data = NewsData.objects.filter(title__contains=name)
+        today_news_title_date = pd.DataFrame(list(today_news_data.values('title', 'date')))
+        today_news_title_date.rename(columns={'date': 'Date'}, inplace=True)
 
-    if today_news_title_date.empty:
-        data['title_label'] = 0
-        return data
+        if today_news_title_date.empty:
+            data['title_label'] = 0
+            return data
 
-    SA_lr_best = joblib.load('./static/SA_lr_best.pkl')
-    tfidf = joblib.load('./static/tfidf.pkl')
-    today_data_title_tfidf = tfidf.transform(today_news_title_date['title'])
-    today_data_title_predict = SA_lr_best.predict(today_data_title_tfidf)
-    today_news_title_date['title_label'] = today_data_title_predict
+        SA_lr_best = joblib.load('./static/SA_lr_best.pkl')
+        tfidf = joblib.load('./static/tfidf.pkl')
+        today_data_title_tfidf = tfidf.transform(today_news_title_date['title'])
+        today_data_title_predict = SA_lr_best.predict(today_data_title_tfidf)
+        today_news_title_date['title_label'] = today_data_title_predict
 
-    newslabel_match_openchange = pd.merge(today_news_title_date[['Date', 'title_label']], data, on='Date', how='right')
-    return newslabel_match_openchange
+        return pd.merge(today_news_title_date[['Date', 'title_label']], data, on='Date', how='right')
+
+    except Exception as e:
+        raise InternalServerError(f"뉴스 레이블 추가 중 오류 발생: {str(e)}")
 
 
-import os  # os 모듈 추가
-
+# 주어진 데이터에 대해 선형 회귀 모델을 만듭니다.
 def make_model(data: pd.DataFrame, name: str) -> LinearRegression:
-    if data is None or len(data) <= 1:
-        print(f"Insufficient data for training model for {name}")
-        return joblib.load('./static/tomorrow_stock.pkl')
+    try:
+        if data is None or len(data) <= 1:
+            raise ValueError(f"Insufficient data for training model for {name}")
 
-    X = data[['title_label', 'Change']].values
-    y = data['Open'].values
+        X = data[['title_label', 'Change']].values
+        y = data['Open'].values
 
-    X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
+        X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2, random_state=42)
 
-    model = LinearRegression()
-    model.fit(X_train, y_train)
+        model = LinearRegression()
+        model.fit(X_train, y_train)
 
-    # 모델 저장 경로 설정
-    model_directory = 'models'
-    model_file_path = f'{model_directory}/{name}_model.pkl'
+        # 모델을 DB에 저장
+        model_data = pickle.dumps(model)
+        StockModelInfo.objects.update_or_create(stock_name=name, defaults={'model_data': model_data})
 
-    # 디렉토리 존재 여부 확인 및 생성
-    if not os.path.exists(model_directory):
-        os.makedirs(model_directory)
+        return model
 
-    # 모델 저장
-    with open(model_file_path, 'wb') as f:
-        pickle.dump(model, f)
-
-    # StockModelInfo 데이터베이스 업데이트
-    StockModelInfo.objects.update_or_create(stock_name=name, defaults={'model_file_path': model_file_path})
-
-    return model
+    except Exception as e:
+        raise InternalServerError(f"모델 생성 중 오류 발생: {str(e)}")
 
 
-
-def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif_data_list: List[tuple], stocks) -> Dict[str, Dict[str, float]]:
+# 주어진 데이터에 대해 예측 결과를 계산합니다.
+def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif_data_list: List[tuple], stocks) -> \
+Dict[str, Dict[str, float]]:
     predicted_stock_openprice = {}
 
     for company_name, data in newslabel_match_openchange.items():
         stock_code = next((stock['productNumber'] for stock in stocks if stock['name'] == company_name), None)
         if not stock_code:
-            print(f"Stock code for {company_name} not found.")
-            continue
+            raise BadRequest(f"Stock code for {company_name} not found.")
 
-        model = make_model(data, company_name)
-        if model is not None:
-            predicted_price = predicted_tomorrow_openprice(data, company_name, model)
+        try:
+            model = make_model(data, company_name)
+            predicted_price = predicted_tomorrow_openprice(data, model)
             today_price = get_today_open_price(stock_code)
             if today_price is not None:
                 predicted_stock_openprice[company_name] = {
@@ -154,10 +147,14 @@ def predict_result(newslabel_match_openchange: Dict[str, pd.DataFrame], open_dif
                     "today_price": today_price
                 }
 
+        except Exception as e:
+            raise InternalServerError(f"{company_name} 예측 중 오류 발생: {str(e)}")
+
     return predicted_stock_openprice
 
 
-def predicted_tomorrow_openprice(data: pd.DataFrame, name: str, model: LinearRegression) -> int:
+# 주어진 모델을 사용하여 다음 날의 주가를 예측합니다.
+def predicted_tomorrow_openprice(data: pd.DataFrame, model: LinearRegression) -> int:
     if data['title_label'].isna().any():
         return 0
 
@@ -167,7 +164,9 @@ def predicted_tomorrow_openprice(data: pd.DataFrame, name: str, model: LinearReg
     return int(predicted_price[0])
 
 
-def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amount: float, stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+# 주어진 예측 결과를 기반으로 주식 주문량을 계산합니다.
+def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amount: float,
+                            stocks: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     stock_orders = []
 
     # 상승 비율 계산 및 필터링 (0 이하 제거)
@@ -213,12 +212,13 @@ def calculate_stock_amounts(predicted_results: Dict[str, Dict[str, float]], amou
         order['productNumber'] = stock_code
 
         # 디버깅 정보 출력
-        print(f"Order for {company_name}: Quantity: {order['quantity']}, Allocated Amount: {allocated_amount:.2f}, Rate: {rate:.2f}")
+        print(
+            f"Order for {company_name}: Quantity: {order['quantity']}, Allocated Amount: {allocated_amount:.2f}, Rate: {rate:.2f}")
 
     return stock_orders
 
 
-
+# 주어진 주식 코드에 대한 오늘의 시가를 반환합니다.
 def get_today_open_price(stock_code: str) -> float:
     today = datetime.date.today().strftime('%Y-%m-%d')
     df = fdr.DataReader(stock_code, today, today)
@@ -226,10 +226,10 @@ def get_today_open_price(stock_code: str) -> float:
     if not df.empty:
         return df['Open'].iloc[0]
     else:
-        print(f"오늘의 시가 데이터를 찾을 수 없습니다: {stock_code}")
-        return None
+        raise BadRequest(f"오늘의 시가 데이터를 찾을 수 없습니다: {stock_code}")
 
 
+# 감정 점수와 가중치를 기반으로 가중 평균을 계산합니다.
 def calculate_weighted_average(sentiments: np.ndarray, weights: np.ndarray) -> float:
     if len(sentiments) != len(weights):
         raise ValueError("감정 점수 리스트와 가중치 리스트의 길이가 일치해야 합니다.")
@@ -243,10 +243,8 @@ def calculate_weighted_average(sentiments: np.ndarray, weights: np.ndarray) -> f
     return weighted_sum / total_weight
 
 
+# 주어진 URL 베이스와 페이지 수를 기반으로 뉴스를 크롤링하고 DB에 저장하는 함수
 def crawl_and_store_news_data(url_base: str, page_count: int) -> (List[str], List[str]):
-    """
-    주어진 URL 베이스와 페이지 수를 기반으로 뉴스를 크롤링하고 DB에 저장하는 함수
-    """
     title_list = []
     date_list = []
 
